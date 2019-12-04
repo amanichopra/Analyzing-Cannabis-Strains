@@ -1,0 +1,425 @@
+---
+title: An R Markdown document converted from "/Users/Aman/Downloads/Analyzing Cannabis
+  Strains_files/Final.ipynb"
+output: html_document
+---
+
+# Analyzing Cannabis Strains
+
+Cannabis is a psychoactive drug originated from the Cannabis plant used for medicinal, recreational, or spiritual purposes. It has a negative reputation, and usage is condemed and deemed illegal in many areas throughout the globe. Its benefits are controversial and more research and development is needed before reaching conclusions in its health-related effects. Many Cannabis strains exist, and they are classified based on the species they encompass (sativa, indica, hybrid) and are named based on taste, color, smell, or the origin of the variety. In this project, we will analyze different strains presented in two [datasets](https://www.kaggle.com/kingburrito666/cannabis-strains). There are 6 features (strain, type, rating, effects, flavor, and description) and 2,351 records (each record representing different strain) in the first dataset and 6 features (strain, type, CBD, THC, daytime/nighttime, and plant length) and 28,420 records (each record representing different cannabis user) in the second dataset.
+
+## 1) Load Data
+
+```{r}
+# import statements; ensure packages are installed
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(nnet)
+```
+
+**Dataset 1:**
+
+```{r}
+data1 = read.csv('Data/cannabis.csv')
+head(data1)
+```
+
+**Dataset 2:**
+
+```{r}
+data2 = read.csv('Data/cannabis1.csv')
+head(data2)
+```
+
+## 2) Preprocessing
+
+We will use Python for preprocessing, as its tools are simpler and more effective for efficient data wrangling. All preprocessing is executed in [this](Preprocessing.ipynb) notebook.
+
+```{r}
+effects_dummy = read.csv('Data/effects_dummy.csv')
+flavors_dummy = read.csv('Data/flavors_dummy.csv')
+data = read.csv('Data/cannabis_dummy.csv')
+head(data)
+```
+
+## 3) Analysis
+
+### Features:
+
+```{r}
+names(data)
+```
+
+### Descriptive Statistics:
+
+```{r}
+summary(data)[,1:7]
+```
+
+**Most Common Effects:**
+
+```{r}
+rev(sort(t(sapply(effects_dummy, table))[,2]))
+```
+
+**Most Common Flavors:**
+
+```{r}
+rev(sort(t(sapply(flavors_dummy, table))[,2]))
+```
+
+### Relationships Between Features:
+
+```{r}
+options(repr.plot.width=7, repr.plot.height=7)
+pairs(data[,2:7])
+```
+
+**After observing the above pairplot, we developed the following research questions:**
+1. Are all types of cannabis rated the same?
+2. Are CBD levels different across different types?
+3. Are THC levels different across different types?
+4. Are plant lengths different across different types?
+5. Is there a correlation between CBD and THC levels?
+6. Is there a correlation between plant length and THC levels?
+
+For each of these questions, we will conduct statistical tests to determine their significance.
+
+**1. Are all types of cannabis rated the same?**
+
+```{r}
+options(repr.plot.width=6, repr.plot.height=3)
+p = ggplot(data=data, aes(x=Type, y=Rating, fill=Type)) + geom_boxplot(alpha=0.25) + ggtitle('Boxplots Comparing Ratings Across Different Types')
+p
+```
+
+The above boxplot comparing the rating distribution across different types suggest that all types of cannabis are equally favorable. We will conduct an anova test to validate our hypothesis.
+
+```{r}
+summary(aov(data$Rating ~ data$Type))
+```
+
+The anova test validates that there is not a difference in CBD levels between the different types. However, because the distribution of ratings for each type seems heavily skewed, the assumptions for anova are not met. We must first eliminate outliers.
+
+```{r}
+rm_outliers = function(x) { # function to remove outliers from vector
+    qnt = quantile(x, probs=c(.25, .75), na.rm = TRUE)
+    y = x
+    y[x < (qnt[1] - 1.5 * IQR(x, na.rm = TRUE))] = NA
+    y[x > (qnt[2] + 1.5 * IQR(x, na.rm = TRUE))] = NA
+    y
+}
+
+aovdata = data
+
+for (type in unique(aovdata$Type)) { # remove rating outliers from each type
+    aovdata[aovdata$Type == type,'Rating'] = rm_outliers(aovdata[aovdata$Type == type,'Rating'])
+}
+
+options(repr.plot.width=12, repr.plot.height=3)
+p = ggplot(data=aovdata, aes(x=Rating, fill=Type)) + geom_density(alpha=0.25) + ylab('Density') + ggtitle('Distribution of Ratings Across Type')
+p1 = p + facet_wrap(~Type) + ggtitle('')
+grid.arrange(p, p1, nrow=1)
+```
+
+```{r}
+options(repr.plot.width=4, repr.plot.height=4)
+ratings.type.aov = aov(aovdata$Rating ~ aovdata$Type)
+qqnorm(ratings.type.aov$residuals)
+qqline(ratings.type.aov$residuals, lwd=3, col='red', lty=3)
+```
+
+```{r}
+for (type in unique(aovdata$Type)) {
+    print(sd(data[aovdata$Type == type, 'Rating']))
+}
+```
+
+After removing outliers, we can see that the residuals are approximately normally distributed and the variances across each type are mostly similar. Thus, we can proceed again with the anova test.
+
+```{r}
+summary(ratings.type.aov)
+```
+
+We have enough evidence to conclude that all types of cannabis are equally favorable.
+
+**2. Are CBD levels different across different types?**
+
+Like done above, let's make a boxplot comparing CBD levels across different cannabis types. 
+
+```{r}
+options(repr.plot.width=6, repr.plot.height=3)
+p = ggplot(data=data, aes(x=Type, y=CBD, fill=Type)) + geom_boxplot(alpha=0.25)
+p
+```
+
+The boxplot shows very clearly that CBD levels are the highest in indica strains, followed by hybrid strains, and ending with sativa strains. We will conduct an anova test to verify this claim. 
+
+```{r}
+summary(aov(data$CBD ~ data$Type))
+```
+
+The anova test validates that there is indeed a difference in CBD levels between the different types. However, because the variances of CBD levels across the different types are not equal, the assumptions for anova are not met, and the test could be misleading.
+
+**3. Are THC levels different across different types?**
+
+Let's make a boxplot comparing THC levels across different cannabis types.
+
+```{r}
+p = ggplot(data=data, aes(x=Type, y=THC, fill=Type)) + geom_boxplot(alpha=0.25)
+p
+```
+
+The boxplot suggests that sativas have the highest THC levels, followed by hybrids, and ending with indicas. We will conduct an anova test to validate this hypothesis.
+
+```{r}
+thc.species.aov = aov(data$THC~data$Type)
+summary(thc.species.aov)
+```
+
+The anova test validates this difference. In this example, it is not as clear if assumptions for anova are met, so we will check to ensure variances of THC across the different types are the same and that the residuals are normally distributed. 
+
+```{r}
+for (type in unique(data$Type)) {
+    print(sd(data[data$Type == type, 'THC']))
+}
+```
+
+```{r}
+options(repr.plot.width=4, repr.plot.height=4)
+qqnorm(thc.species.aov$residuals)
+qqline(thc.species.aov$residuals, lwd=3, col='red', lty=3)
+```
+
+It seems like the variances of CBD levels are somewhat simliar, except for hybrid strains which seem to have a higher variance. The qqplot also suggests that the residuals could follow an approximate normal distribution; however, there could potentially be some skewness.
+
+**4. Are plant lengths different across different types?**
+
+Let's make a boxplot comparing plant lengths across different cannabis types.
+
+```{r}
+p = ggplot(data=data, aes(x=Type, y=Plant.Length, fill=Type)) + geom_boxplot(alpha=0.25)
+p
+```
+
+The boxplot suggests that sativas have the highest plant lengths, while hybrids and indicas have lower, similar plant lengths. We will conduct an anova test and TukeyHSD intervals to validate this hypothesis.
+
+```{r}
+length.type.aov = aov(data$Plant.Length ~ data$Type)
+summary(length.type.aov)
+```
+
+The anova test validates this difference. However, the test could be somewhat misleading since the variance of plant lengths for sativas is much higher than that of other types.
+
+```{r}
+TukeyHSD(length.type.aov)
+```
+
+The TukeyHSD interval suggests that hybrids and sativas and indicas and sativas differ significantly in their average plant lengths.
+
+**5. Is there a correlation between CBD and THC levels?**
+
+We will conduct a correlation test (t-test) to verify this hypothesis.
+
+```{r}
+cor.test(data$THC, data$CBD)
+```
+
+The test validates that there is indeed a correlation between the two variables, as the pairs plot above suggests. 
+
+**6. Is there a correlation between plant length and THC levels?**
+
+We will conduct an F to verify this hypothesis.
+
+```{r}
+summary(aov(lm(data$Plant.Length ~ data$THC)))
+```
+
+The test verifies that there is evidence to conclude that there is correlation between THC and plant length, as the pairs plot above suggests.
+
+### Model Fitting & Evaluation:
+
+**Multiple Linear Regression Model:**
+
+Let's build a model we can use to predict THC levels, given values for all other numerical and categorical features. We will eliminate two-way interactions to prevent slow runtimes for later parts.
+
+```{r}
+full.mod = lm(THC~., data=data[,2:73]) # eliminate "Strains" and "Description" features
+```
+
+We will perform the backwards stepwise procedure to select a good-fitting reduced model.
+
+```{r}
+red.mod = step(full.mod)
+```
+
+The procedure produced a model with the lowest AIC of -23586.61. The selected features are Type, CBD, Plant.Length, E.Creative, F.Pine, F.Pineapple, F.Lime, F.Violet, F.Strawberry, F.Blue, F.Mango, F.Pepper, F.Woody, F.Apricot, F.Coffee, F.Lemon, and F.Citrus.
+
+```{r}
+print('Full Model Adjusted R^2:')
+summary(full.mod)$adj.r.squared
+print('Reduced Model Adjusted R^2:')
+summary(red.mod)$adj.r.squared
+```
+
+The reduced model has an adjusted R^2 higher than the full model's. It appears that the reduced model accounts for ~90.74% of the variability THC levels.
+
+```{r}
+anova(red.mod, full.mod)
+```
+
+Using a partial F test to compare the two models, it does not seem like the added predictors in the full model add anything of significance. 
+
+```{r}
+mlr.mod = red.mod # save model for later
+```
+
+**Multinomial Logistic Regression Model:**
+
+Let's build a model we can use to predict the type of cannabis, given values for all other numerical and categorical features. We will consider Rating, CBD, THC, Plant.Length, Daytime.Nighttime, E.Happy, E.Relaxed, E.Euphoric, E.Uplifted, and F.Earthy, F.Sweet, and F.Citrus as the features. These particular effects were selected, as they are the most prevalent in the dataset (shown in descriptive statistics) section.
+
+We will build two models: one including two-way interactions, and the other excluding them.
+
+```{r}
+full.mod = multinom(Type~(CBD+THC+Plant.Length+Daytime.Nighttime+E.Happy+E.Relaxed+E.Euphoric+E.Uplifted+F.Earthy+F.Sweet+F.Citrus)^2, data=data)
+```
+
+```{r}
+summary(full.mod)
+```
+
+```{r}
+alt.mod = multinom(Type~(CBD+THC+Plant.Length+Daytime.Nighttime+E.Happy+E.Relaxed+E.Euphoric+E.Uplifted+F.Earthy+F.Sweet+F.Citrus), data=data)
+```
+
+```{r}
+summary(alt.mod)
+```
+
+We will consider AIC for model evaluation, and it seems that the model without two-way interactions seems to be better, as its AIC is ~48 (as opposed to ~268).
+
+```{r}
+anova(alt.mod, full.mod)
+```
+
+The above partial F test also suggests that the model without two-way interactions is better.
+
+```{r}
+multi.log.reg.mod = alt.mod # save model for later
+```
+
+### Model Testing:
+
+We collected data from cannabis users in California. When surveying them, we only considered the features used to construct the two models above:
+<br>
+<br>
+**Rating, Type, CBD, THC, Plant.Length, Daytime.Nighttime, E.Creative, E.Uplifted, E.Happy, E.Relaxed, F.Pine, F.Pineapple, F.Lime, F.Violet, F.Strawberry, F.Blue, F.Mango, F.Pepper, F.Woody, F.Apricot, F.Coffee, F.Lemon, F.Earthy, F.Sweet, and F.Citrus.**
+
+```{r}
+survey = read.csv('Data/survey.csv')
+head(survey)
+```
+
+Let's use the first model to predict THC level based on Type, CBD, Plant.Length, E.Creative, F.Pine, F.Pineapple, F.Lime, F.Violet, F.Strawberry, F.Blue, F.Mango, F.Pepper, F.Woody, F.Apricot, F.Coffee, F.Lemon, and F.Citrus.
+
+```{r}
+predict(mlr.mod, survey[,c('Type', 'CBD', 'Plant.Length', 'E.Creative', 'F.Pine', 'F.Pineapple', 'F.Lime', 'F.Violet', 'F.Strawberry', 'F.Blue', 'F.Mango', 'F.Pepper', 'F.Woody', 'F.Apricot', 'F.Coffee', 'F.Lemon', 'F.Citrus')])
+```
+
+Comparing the above output with the true values recorded in the survey data shows that our multiple linear regresion model is sucessful in predicting the correct THC levels.
+
+Let's now use the second model to predict type of cannabis based on CBD, THC, Plant.Length, Daytime.Nighttime, E.Happy, E.Relaxed, E.Euphoric, E.Uplifted, F.Earthy, F.Sweet, and F.Citrus.
+
+```{r}
+predict(multi.log.reg.mod, survey[,c('CBD', 'THC', 'Plant.Length', 'Daytime.Nighttime', 'E.Happy', 'E.Relaxed', 'E.Euphoric', 'E.Uplifted', 'F.Earthy', 'F.Sweet', 'F.Citrus')], type='probs')
+```
+
+Comparing the above output with the true values recorded in the survey data shows that our multinomial logistic regresion model is sucessful in predicting the correct cannabis type.
+
+### Analyzing Descriptions:
+
+We will construct word clouds to take a closer look at descriptions for each type of cannabis.
+
+```{r}
+library('tm') # import req libraries
+library('SnowballC')
+library('wordcloud')
+library('RColorBrewer')
+```
+
+**Indica:**
+
+```{r}
+docs = Corpus(VectorSource(data[data$Type == 'indica','Description']))
+docs = tm_map(docs, content_transformer(tolower))
+docs = tm_map(docs, removeNumbers)
+docs = tm_map(docs, removeWords, c(stopwords("english"), 'strain'))
+docs = tm_map(docs, removePunctuation)
+docs = tm_map(docs, stripWhitespace)
+```
+
+```{r}
+doc.term.mat = TermDocumentMatrix(docs)
+v = sort(rowSums(as.matrix(doc.term.mat)),decreasing=TRUE)
+word.freq = data.frame(word = names(v),freq=v)
+head(word.freq)
+```
+
+```{r}
+options(repr.plot.width=6, repr.plot.height=6)
+wordcloud(words = word.freq$word, freq = word.freq$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+**Hybrid:**
+
+```{r}
+docs = Corpus(VectorSource(data[data$Type == 'hybrid','Description']))
+docs = tm_map(docs, content_transformer(tolower))
+docs = tm_map(docs, removeNumbers)
+docs = tm_map(docs, removeWords, c(stopwords("english"), 'strain'))
+docs = tm_map(docs, removePunctuation)
+docs = tm_map(docs, stripWhitespace)
+```
+
+```{r}
+doc.term.mat = TermDocumentMatrix(docs)
+v = sort(rowSums(as.matrix(doc.term.mat)),decreasing=TRUE)
+word.freq = data.frame(word = names(v),freq=v)
+head(word.freq)
+```
+
+```{r}
+wordcloud(words = word.freq$word, freq = word.freq$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+**Sativa:**
+
+```{r}
+docs = Corpus(VectorSource(data[data$Type == 'sativa','Description']))
+docs = tm_map(docs, content_transformer(tolower))
+docs = tm_map(docs, removeNumbers)
+docs = tm_map(docs, removeWords, c(stopwords("english"), 'strain'))
+docs = tm_map(docs, removePunctuation)
+docs = tm_map(docs, stripWhitespace)
+```
+
+```{r}
+doc.term.mat = TermDocumentMatrix(docs)
+v = sort(rowSums(as.matrix(doc.term.mat)),decreasing=TRUE)
+word.freq = data.frame(word = names(v),freq=v)
+head(word.freq)
+```
+
+```{r}
+wordcloud(words = word.freq$word, freq = word.freq$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
